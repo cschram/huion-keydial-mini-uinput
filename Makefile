@@ -1,4 +1,4 @@
-.PHONY: help install install-dev install-system install-all install-udev install-systemd install-config uninstall uninstall-all clean build test test-cov package-python package-arch package-debian package-rpm package-all uninstall-systemd uninstall-system uninstall-udev uninstall-config
+.PHONY: help install install-dev install-system install-all install-user install-user-all install-udev install-systemd install-user-systemd install-config uninstall uninstall-all clean build test test-cov lint package-python package-arch package-debian package-rpm package-all uninstall-systemd uninstall-system uninstall-udev uninstall-user uninstall-config
 
 PYTHON := python3
 PIP := pip3
@@ -14,10 +14,14 @@ help:
 	@echo "Huion Keydial Mini Driver - Make Commands"
 	@echo ""
 	@echo "Installation:"
-	@echo "  install       Install the package locally"
-	@echo "  install-dev   Install in development mode"
-	@echo "  install-all   Complete installation (system + services + udev)"
-	@echo "  uninstall-all Uninstall everything"
+	@echo "  install        Install the package locally"
+	@echo "  install-dev    Install in development mode"
+	@echo "  install-system Install system-wide (requires root)"
+	@echo "  install-all    Complete installation (system + services + udev)"
+	@echo ""
+	@echo "User-level installation (for atomic/read-only filesystems):"
+	@echo "  install-user       Install to user directory (~/.local)"
+	@echo "  install-user-all   Full user-level install (no root required)"
 	@echo ""
 	@echo "Development:"
 	@echo "  build         Build wheel package"
@@ -46,6 +50,9 @@ install-dev:
 install-system: build-system
 	$(PYTHON) -m installer --prefix=/usr dist/*.whl
 
+install-user: build-system
+	$(PIP) install --user dist/*.whl
+
 build-system:
 	$(PYTHON) -m build
 
@@ -61,9 +68,13 @@ install-udev:
 install-config:
 	@echo "Installing configuration files with proper permissions..."
 	mkdir -p ~/.config/huion-keydial-mini
-	install -m $(CONFIG_PERMS) packaging/config.yaml.default ~/.config/huion-keydial-mini/config.yaml
-	@echo "Configuration installed with permissions: $(CONFIG_PERMS)"
-	@echo "Edit ~/.config/huion-keydial-mini/config.yaml to customize your key bindings"
+	@if [ ! -f ~/.config/huion-keydial-mini/config.yaml ]; then \
+		install -m $(CONFIG_PERMS) packaging/config.yaml.default ~/.config/huion-keydial-mini/config.yaml; \
+		echo "Configuration installed with permissions: $(CONFIG_PERMS)"; \
+		echo "Edit ~/.config/huion-keydial-mini/config.yaml to customize your key bindings"; \
+	else \
+		echo "Config file already exists at ~/.config/huion-keydial-mini/config.yaml, skipping..."; \
+	fi
 
 clean:
 	rm -rf build/
@@ -90,6 +101,15 @@ test:
 	fi
 
 
+
+lint:
+	@echo "Running ruff linter..."
+	@if command -v ruff >/dev/null 2>&1; then \
+		ruff check src/ tests/; \
+	else \
+		echo "ruff not found. Install with: pip install -e '.[dev]'"; \
+		exit 1; \
+	fi
 
 test-cov:
 	@echo "Running tests with coverage..."
@@ -161,6 +181,14 @@ install-systemd:
 	@echo "Systemd services installed with proper permissions:"
 	@echo "  - User service: $(SERVICE_PERMS)"
 
+install-user-systemd:
+	@echo "Installing systemd user service..."
+	mkdir -p ~/.config/systemd/user
+	install -m $(SERVICE_PERMS) packaging/systemd/huion-keydial-mini-user.service ~/.config/systemd/user/
+	@echo "Systemd user service installed to ~/.config/systemd/user/"
+	@echo "Enable with: systemctl --user enable huion-keydial-mini-user.service"
+	@echo "Start with: systemctl --user start huion-keydial-mini-user.service"
+
 uninstall-systemd:
 	rm -f /etc/systemd/user/huion-keydial-mini-user.service
 	systemctl daemon-reload
@@ -173,8 +201,16 @@ uninstall-system:
 	rm -f /usr/bin/keydialctl
 
 # Additional installation targets with proper permissions
-install-all: install-system install-systemd install-udev
+install-all: install-system install-systemd
+	-./packaging/install-udev.sh || true
+	@echo ""
 	@echo "Full installation complete with proper permissions set"
+	@echo "Note: If udev installation failed, you may need to manually configure device access"
+
+install-user-all: install-user install-user-systemd install-config
+	@echo "User-level installation complete (no root required)"
+	@echo "Start the service with: systemctl --user start huion-keydial-mini-user.service"
+	@echo "Enable at boot with: systemctl --user enable huion-keydial-mini-user.service"
 
 
 
@@ -184,6 +220,12 @@ uninstall-all: uninstall-system uninstall-systemd uninstall-udev
 	@echo "Note: If you want to remove all traces, you may also want to:"
 	@echo "  - Remove user from input group: sudo gpasswd -d \$$USER input"
 	@echo "  - Remove any remaining log files: journalctl --vacuum-time=1s"
+
+uninstall-user:
+	@echo "Uninstalling user-level installation..."
+	$(PIP) uninstall -y huion-keydial-mini-driver 2>/dev/null || true
+	rm -f ~/.config/systemd/user/huion-keydial-mini-user.service
+	@echo "User-level uninstall complete"
 
 uninstall-udev:
 	@echo "Removing udev rules and scripts..."

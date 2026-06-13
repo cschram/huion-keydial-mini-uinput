@@ -4,15 +4,13 @@ import asyncio
 import logging
 import sys
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional
 
 import click
-import yaml
 
 from .config import Config
+from .keybind_manager import SCROLL_ACTIONS, send_command
 from .uinput_handler import UInputHandler
-from .keybind_manager import send_command, KeybindAction, EventType
-
 
 logger = logging.getLogger(__name__)
 
@@ -42,16 +40,19 @@ def cli(ctx, config: Optional[str]):
 @click.option('--sticky', is_flag=True, default=False, help='Make this a sticky key binding that holds until released')
 @click.pass_context
 def bind(ctx, action_id: str, key_data: str, sticky: bool):
-    """Bind a keyboard action to a button, button combination, or dial event.
+    """Bind a keyboard or scroll action to a button, button combination, or dial event.
 
     ACTION_ID: Action identifier - individual buttons (BUTTON_1-18),
                button combos (BUTTON_1+BUTTON_2), or dial actions (DIAL_CW, DIAL_CCW, DIAL_CLICK)
-    KEY_DATA: Key data (e.g., "KEY_F1", "KEY_CTRL+KEY_C")
+    KEY_DATA: Key data (e.g., "KEY_F1", "KEY_CTRL+KEY_C") or a scroll action
+              (SCROLL_UP, SCROLL_DOWN, SCROLL_LEFT, SCROLL_RIGHT)
 
     Examples:
       keydialctl bind BUTTON_1 KEY_F1                    # Individual button
       keydialctl bind BUTTON_1+BUTTON_2 KEY_CTRL+KEY_C  # Button combination
       keydialctl bind DIAL_CW KEY_VOLUMEUP               # Dial action
+      keydialctl bind DIAL_CW SCROLL_UP                  # Dial scroll wheel
+      keydialctl bind DIAL_CCW SCROLL_DOWN               # Dial scroll wheel
       keydialctl bind --sticky BUTTON_1 KEY_F1          # Sticky key binding
 
     Note: You can also configure actions in the config file using the new format.
@@ -99,13 +100,15 @@ def bind(ctx, action_id: str, key_data: str, sticky: bool):
             click.echo(f"Error: Invalid action ID '{action_id}'", err=True)
             click.echo(f"Valid individual buttons: {', '.join(valid_buttons)}")
             click.echo(f"Valid dial actions: {', '.join(valid_dial_actions)}")
-            click.echo(f"Button combinations: BUTTON_1+BUTTON_2, etc.")
+            click.echo("Button combinations: BUTTON_1+BUTTON_2, etc.")
             sys.exit(1)
 
         # Parse key data
         keys = [k.strip() for k in key_data.split('+')]
+        # Scroll tokens (SCROLL_UP, etc.) map to mouse wheel movement, not keys.
+        action_type = 'scroll' if keys and all(k in SCROLL_ACTIONS for k in keys) else 'keyboard'
         action = {
-            'type': 'keyboard',
+            'type': action_type,
             'keys': keys,
             'sticky': sticky,
             'description': f"{normalized_action_id} -> {key_data}" + (" (sticky)" if sticky else "")
@@ -188,7 +191,7 @@ def unbind(ctx, action_id: str):
             click.echo(f"Error: Invalid action ID '{action_id}'", err=True)
             click.echo(f"Valid individual buttons: {', '.join(valid_buttons)}")
             click.echo(f"Valid dial actions: {', '.join(valid_dial_actions)}")
-            click.echo(f"Button combinations: BUTTON_1+BUTTON_2, etc.")
+            click.echo("Button combinations: BUTTON_1+BUTTON_2, etc.")
             sys.exit(1)
 
         command = {
@@ -332,11 +335,18 @@ def list_keys(ctx):
     # Group keys by category
     function_keys = [k for k in supported_keys if k.startswith('KEY_F')]
     modifier_keys = [k for k in supported_keys if 'CTRL' in k or 'SHIFT' in k or 'ALT' in k or 'META' in k]
-    navigation_keys = [k for k in supported_keys if k in ['KEY_UP', 'KEY_DOWN', 'KEY_LEFT', 'KEY_RIGHT', 'KEY_HOME', 'KEY_END', 'KEY_PAGEUP', 'KEY_PAGEDOWN']]
-    media_keys = [k for k in supported_keys if k in ['KEY_VOLUMEUP', 'KEY_VOLUMEDOWN', 'KEY_MUTE', 'KEY_PLAYPAUSE', 'KEY_NEXTSONG', 'KEY_PREVIOUSSONG']]
+    navigation_keys = [k for k in supported_keys if k in [
+        'KEY_UP', 'KEY_DOWN', 'KEY_LEFT', 'KEY_RIGHT',
+        'KEY_HOME', 'KEY_END', 'KEY_PAGEUP', 'KEY_PAGEDOWN',
+    ]]
+    media_keys = [k for k in supported_keys if k in [
+        'KEY_VOLUMEUP', 'KEY_VOLUMEDOWN', 'KEY_MUTE',
+        'KEY_PLAYPAUSE', 'KEY_NEXTSONG', 'KEY_PREVIOUSSONG',
+    ]]
     letter_keys = [k for k in supported_keys if len(k) == 4 and k.startswith('KEY_') and k[4:].isalpha()]
     number_keys = [k for k in supported_keys if len(k) == 4 and k.startswith('KEY_') and k[4:].isdigit()]
-    other_keys = [k for k in supported_keys if k not in function_keys + modifier_keys + navigation_keys + media_keys + letter_keys + number_keys]
+    excluded = function_keys + modifier_keys + navigation_keys + media_keys + letter_keys + number_keys
+    other_keys = [k for k in supported_keys if k not in excluded]
 
     if function_keys:
         click.echo("Function keys:")
@@ -448,6 +458,56 @@ def reset(ctx):
             sys.exit(1)
 
     asyncio.run(do_reset())
+
+
+@cli.group()
+@click.pass_context
+def layer(ctx):
+    """Manage layers (view or switch)."""
+    pass
+
+
+@layer.command()
+@click.pass_context
+def show(ctx):
+    """Show the current layer."""
+    async def do_show():
+        socket_path = get_socket_path()
+        try:
+            response = await send_command(socket_path, {'command': 'get_layer'})
+            if response.get('status') == 'success':
+                click.echo(f"Current layer: {response['layer_index']} - {response['layer_name']}")
+            else:
+                click.echo(f"Error: {response.get('message', 'Unknown error')}", err=True)
+                sys.exit(1)
+        except Exception as e:
+            click.echo(f"Failed to connect to service: {e}", err=True)
+            sys.exit(1)
+
+    asyncio.run(do_show())
+
+
+@layer.command()
+@click.pass_context
+def next(ctx):
+    """Switch to the next layer (cycles through all layers)."""
+    async def do_next():
+        socket_path = get_socket_path()
+        try:
+            response = await send_command(socket_path, {
+                'command': 'set_layer',
+                'mode': 'next'
+            })
+            if response.get('status') == 'success':
+                click.echo(f"Switched to layer {response['layer_index']}: {response['layer_name']}")
+            else:
+                click.echo(f"Error: {response.get('message', 'Unknown error')}", err=True)
+                sys.exit(1)
+        except Exception as e:
+            click.echo(f"Failed to connect to service: {e}", err=True)
+            sys.exit(1)
+
+    asyncio.run(do_next())
 
 
 def _load_config(config_path: Optional[str]) -> Config:

@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """Main entry point for the Huion Keydial Mini driver."""
 
-import sys
-import argparse
-from pathlib import Path
 
 from .main import main as driver_main
 

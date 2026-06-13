@@ -14,11 +14,8 @@ Thank you for your interest in contributing to the Huion Keydial Mini driver! Th
 
 2. **Set up development environment**:
    ```bash
-   # Install dependencies
-   pip install -r requirements.txt
-
-   # Install in development mode
-   pip install -e .
+   # Install in development mode with test and dev dependencies
+   pip install -e ".[test,dev]"
    ```
 
 3. **Install system dependencies**:
@@ -33,14 +30,14 @@ Thank you for your interest in contributing to the Huion Keydial Mini driver! Th
 ### Building from Source
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Install in development mode
-pip install -e .
+# Install in development mode with all dependencies
+pip install -e ".[test,dev]"
 
 # Run tests
-python -m pytest tests/
+make test
+
+# Build a wheel
+make build
 ```
 
 ## Testing
@@ -91,8 +88,8 @@ python src/huion_keydial_mini/debug_parser.py --interactive
 2. **Test key bindings**:
    ```bash
    # Set up test bindings
-   keydialctl bind BUTTON_1 keyboard KEY_F1
-   keydialctl bind DIAL_CW keyboard KEY_VOLUMEUP
+   keydialctl bind BUTTON_1 KEY_F1
+   keydialctl bind DIAL_CW KEY_VOLUMEUP
 
    # Test functionality
    keydialctl list-bindings
@@ -122,22 +119,21 @@ sudo python -m huion_keydial_mini.event_logger
 
 ### Code Formatting
 
+The project uses [ruff](https://docs.astral.sh/ruff/) for linting and import sorting. It is included in the `dev` extras (`pip install -e ".[dev]"`).
+
 ```bash
-# Format code with black
-black src/ tests/
+# Check for lint errors
+make lint
+# or: ruff check src/ tests/
 
-# Sort imports with isort
-isort src/ tests/
-
-# Check with flake8
-flake8 src/ tests/
-
-# Type checking with mypy
-mypy src/
+# Auto-fix safe violations (unused imports, import sorting)
+ruff check src/ tests/ --fix
 
 # Check for dependency issues
 pip check
 ```
+
+Ruff is configured in `pyproject.toml` (`[tool.ruff]`). Line length is 120. Selected rules: `E` (pycodestyle errors), `F` (pyflakes), `W` (pycodestyle warnings), `I` (isort).
 
 ### Example Code Style
 
@@ -205,18 +201,19 @@ def parse_hid_data(data: bytes) -> Optional[List[InputEvent]]:
 huion-keydial-mini-uinput/
 ├── src/huion_keydial_mini/     # Main source code
 │   ├── __init__.py
-│   ├── __main__.py             # Entry point
-│   ├── bluetooth_watcher.py    # DBus monitoring
-│   ├── config.py               # Configuration management
-│   ├── device.py               # Device communication
-│   ├── hid_parser.py           # HID data parsing
-│   ├── keybind_manager.py      # Keybind management
-│   ├── keydialctl.py           # CLI interface
-│   ├── main.py                 # Main application logic
-│   └── uinput_handler.py       # Virtual input device
-├── tests/                      # Test files
-├── packaging/                  # Package configuration
-├── docs/                       # Documentation
+│   ├── __main__.py             # Package entry point (delegates to main.py)
+│   ├── bluetooth_watcher.py    # D-Bus device connect/disconnect monitoring
+│   ├── config.py               # YAML config loading and defaults
+│   ├── device.py               # BLE connection lifecycle
+│   ├── event_logger.py         # Standalone HID event logger / diagnostic tool
+│   ├── hid_parser.py           # Raw HID byte parsing, combos, sticky/held modifiers
+│   ├── keybind_manager.py      # Keybind maps, layers, Unix socket server
+│   ├── keydialctl.py           # CLI for runtime keybind management
+│   ├── main.py                 # DriverManager lifecycle (daemon entry point)
+│   ├── notification.py         # Desktop notification helper (notify-send)
+│   └── uinput_handler.py       # Virtual input device creation and event emission
+├── tests/                      # pytest test suite
+├── packaging/                  # Systemd, udev, distro packages
 └── README.md                   # Main documentation
 ```
 

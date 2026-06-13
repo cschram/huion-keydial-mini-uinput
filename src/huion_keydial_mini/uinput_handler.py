@@ -1,16 +1,15 @@
 """UInput handler for generating Linux input events."""
 
-import asyncio
 import logging
-from typing import List, Optional, Dict
-import evdev
-from evdev import UInput, ecodes
 import time
+from typing import Dict, List, Optional
+
+from evdev import UInput, ecodes
 
 from .config import Config
-from .hid_parser import InputEvent, EventType
-from .keybind_manager import KeybindManager, KeybindAction, EventType as BindEventType
-
+from .hid_parser import EventType, InputEvent
+from .keybind_manager import EventType as BindEventType
+from .keybind_manager import KeybindAction, KeybindManager
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +213,22 @@ class UInputHandler:
         'BTN_TASK': ecodes.BTN_TASK,
     }
 
+    # Mapping of scroll action tokens to (relative axis, value) pairs.
+    SCROLL_MAPPING = {
+        'SCROLL_UP': (ecodes.REL_WHEEL, 1),
+        'SCROLL_DOWN': (ecodes.REL_WHEEL, -1),
+        'SCROLL_LEFT': (ecodes.REL_HWHEEL, -1),
+        'SCROLL_RIGHT': (ecodes.REL_HWHEEL, 1),
+    }
+
+    # Hi-resolution counterparts (libinput/Wayland convention: 120 units per scroll notch).
+    SCROLL_HI_RES_MAPPING = {
+        'SCROLL_UP': (ecodes.REL_WHEEL_HI_RES, 120),
+        'SCROLL_DOWN': (ecodes.REL_WHEEL_HI_RES, -120),
+        'SCROLL_LEFT': (ecodes.REL_HWHEEL_HI_RES, -120),
+        'SCROLL_RIGHT': (ecodes.REL_HWHEEL_HI_RES, 120),
+    }
+
     def __init__(self, config: Config, keybind_manager: Optional[KeybindManager] = None):
         self.config = config
         self.keybind_manager = keybind_manager
@@ -238,22 +253,29 @@ class UInputHandler:
                     logger.info(f"Waiting for uinput device... (attempt {attempt + 1}/{max_retries})")
                     time.sleep(retry_delay)
                 else:
-                    logger.error(f"Failed to open uinput device '{self.config.uinput_device_name}' after {max_retries} attempts: {e}")
+                    logger.error(
+                        f"Failed to open uinput device '{self.config.uinput_device_name}' "
+                        f"after {max_retries} attempts: {e}"
+                    )
                     raise RuntimeError(f"uinput device not available after {max_retries} seconds")
 
     def _build_capabilities(self) -> Dict:
         """Build device capabilities based on configuration and keybind manager."""
         capabilities = {
-            evdev.ecodes.EV_KEY: [],
+            ecodes.EV_KEY: [],
             # Add mouse relative events for scroll and movement
-            evdev.ecodes.EV_REL: [evdev.ecodes.REL_X, evdev.ecodes.REL_Y, evdev.ecodes.REL_WHEEL, evdev.ecodes.REL_HWHEEL],
+            ecodes.EV_REL: [
+                ecodes.REL_X, ecodes.REL_Y,
+                ecodes.REL_WHEEL, ecodes.REL_HWHEEL,
+                ecodes.REL_WHEEL_HI_RES, ecodes.REL_HWHEEL_HI_RES,
+            ],
         }
 
         # Add all possible keys that might be used
         for key_name in self.KEY_MAPPING.keys():
             key_code = self.KEY_MAPPING.get(key_name)
-            if key_code and key_code not in capabilities[evdev.ecodes.EV_KEY]:
-                capabilities[evdev.ecodes.EV_KEY].append(key_code)
+            if key_code and key_code not in capabilities[ecodes.EV_KEY]:
+                capabilities[ecodes.EV_KEY].append(key_code)
 
         # Add keys from keybind manager if available
         if self.keybind_manager:
@@ -261,8 +283,8 @@ class UInputHandler:
                 if action.keys:
                     for key_name in action.keys:
                         key_code = self.KEY_MAPPING.get(key_name)
-                        if key_code and key_code not in capabilities[evdev.ecodes.EV_KEY]:
-                            capabilities[evdev.ecodes.EV_KEY].append(key_code)
+                        if key_code and key_code not in capabilities[ecodes.EV_KEY]:
+                            capabilities[ecodes.EV_KEY].append(key_code)
 
         return capabilities
 
@@ -292,6 +314,8 @@ class UInputHandler:
             # Execute the action based on its type
             if action.type == BindEventType.KEYBOARD:
                 await self._send_keyboard_action(action, event)
+            elif action.type == BindEventType.SCROLL:
+                await self._send_scroll_action(action, event)
             else:
                 logger.warning(f"Unknown action type: {action.type}")
 
@@ -299,7 +323,7 @@ class UInputHandler:
             logger.error(f"Error sending event: {e}")
 
     def _get_action_id_from_event(self, event: InputEvent) -> Optional[str]:
-        if event.key_code != None:
+        if event.key_code is not None:
             return event.key_code
         else:
             logger.warning(f"No keycode found for event: {event}")
@@ -315,33 +339,66 @@ class UInputHandler:
             logger.warning("No virtual device available")
             return
 
-        # Determine if this is a press or release
         is_press = event.event_type == EventType.KEY_PRESS
 
         try:
             if is_press:
-                # Press all keys in order
                 for key_name in action.keys:
                     key_code = self.KEY_MAPPING.get(key_name)
                     if key_code:
-                        self.device.write(evdev.ecodes.EV_KEY, key_code, 1)
-                        self.device.syn()
+                        self.device.write(ecodes.EV_KEY, key_code, 1)
                         logger.debug(f"Pressed key: {key_name}")
                     else:
                         logger.warning(f"Unknown key: {key_name}")
+                self.device.syn()
             else:
-                # Release all keys in reverse order
                 for key_name in reversed(action.keys):
                     key_code = self.KEY_MAPPING.get(key_name)
                     if key_code:
-                        self.device.write(evdev.ecodes.EV_KEY, key_code, 0)
-                        self.device.syn()
+                        self.device.write(ecodes.EV_KEY, key_code, 0)
                         logger.debug(f"Released key: {key_name}")
                     else:
                         logger.warning(f"Unknown key: {key_name}")
+                self.device.syn()
 
         except Exception as e:
             logger.error(f"Error sending keyboard action: {e}")
+
+    async def _send_scroll_action(self, action: KeybindAction, event: InputEvent):
+        """Send a mouse scroll-wheel action.
+
+        Scrolling is a discrete relative movement with no press/release state, so
+        we emit only on KEY_PRESS. The dial generates a press+release pair per
+        rotation step, which yields exactly one scroll tick per step.
+        """
+        if not action.keys:
+            logger.warning("Scroll action has no keys defined")
+            return
+
+        if not self.device:
+            logger.warning("No virtual device available")
+            return
+
+        # Only act on press to avoid double-firing on the dial's press+release pair.
+        if event.event_type != EventType.KEY_PRESS:
+            return
+
+        try:
+            for token in action.keys:
+                mapping = self.SCROLL_MAPPING.get(token)
+                if not mapping:
+                    logger.warning(f"Unknown scroll action: {token}")
+                    continue
+                rel_code, value = mapping
+                self.device.write(ecodes.EV_REL, rel_code, value)
+                hi_res = self.SCROLL_HI_RES_MAPPING.get(token)
+                if hi_res:
+                    self.device.write(ecodes.EV_REL, hi_res[0], hi_res[1])
+                self.device.syn()
+                logger.debug(f"Scrolled: {token}")
+
+        except Exception as e:
+            logger.error(f"Error sending scroll action: {e}")
 
     def get_supported_keys(self) -> List[str]:
         """Get list of supported key names."""

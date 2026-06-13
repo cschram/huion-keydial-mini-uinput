@@ -2,19 +2,16 @@
 
 import asyncio
 import logging
-from typing import Optional, Callable, Dict, Any, List, NamedTuple, Union
-import struct
+from typing import Any, Dict, NamedTuple, Optional
 
-from bleak import BleakClient, BleakScanner
+from bleak import BleakClient
 from bleak.backends.device import BLEDevice
-from bleak.backends.characteristic import BleakGATTCharacteristic
 
-from .config import Config
-from .uinput_handler import UInputHandler
-from .hid_parser import HIDParser
-from .keybind_manager import KeybindManager
 from .bluetooth_watcher import BluetoothWatcher
-
+from .config import Config
+from .hid_parser import EventType, HIDParser
+from .keybind_manager import KeybindManager
+from .uinput_handler import UInputHandler
 
 logger = logging.getLogger(__name__)
 
@@ -106,8 +103,8 @@ class HuionKeydialMini:
             except Exception as e:
                 logger.warning(f"Error disconnecting: {e}")
 
-        if self.uinput_handler:
-            pass
+        # Release any held modifiers so they don't get stuck down in uinput.
+        await self._release_held_modifiers()
 
         if self.keybind_manager:
             await self.keybind_manager.stop_socket_server()
@@ -180,6 +177,9 @@ class HuionKeydialMini:
         """Detach from the current device and return to wait mode."""
         logger.info("Detaching from device...")
 
+        # Release any held modifiers so they don't get stuck down in uinput.
+        await self._release_held_modifiers()
+
         if self.client and self.connected:
             try:
                 await self.client.disconnect()
@@ -192,6 +192,17 @@ class HuionKeydialMini:
         self.reconnect_attempts = 0
 
         logger.info("Detached from device - waiting for next connection")
+
+
+    async def _release_held_modifiers(self):
+        """Release any held modifier buttons to prevent stuck keys in uinput."""
+        if not self.hid_parser or not self.uinput_handler:
+            return
+        for event in self.hid_parser.flush_held_modifiers():
+            try:
+                await self.uinput_handler.send_event(event)
+            except Exception as e:
+                logger.warning(f"Error releasing held modifier {event.key_code}: {e}")
 
 
     async def _connect_with_retry(self):
@@ -220,8 +231,18 @@ class HuionKeydialMini:
 
         logger.info(f"Connecting to {self.device_info.address}...")
 
+        # The device is normally ALREADY connected at the BlueZ level (BlueZ's
+        # HID-over-GATT plugin connects it automatically). An already-connected
+        # BLE device no longer advertises, so BleakClient(<address-string>),
+        # which scans to resolve the device, fails with
+        # "Device with address ... was not found". Resolve the BlueZ object path
+        # ourselves and hand bleak a BLEDevice so it attaches directly without
+        # scanning. Fall back to the bare address if resolution fails.
+        ble_device = await self._resolve_ble_device()
+        target = ble_device if ble_device is not None else self.device_info.address
+
         self.client = BleakClient(
-            self.device_info.address,
+            target,
             timeout=self.config.connection_timeout
         )
 
@@ -239,6 +260,72 @@ class HuionKeydialMini:
             logger.error(f"Connection failed: {e}")
             self.connected = False
             raise
+
+    async def _resolve_ble_device(self) -> Optional[BLEDevice]:
+        """Resolve the target MAC to a BLEDevice carrying its BlueZ object path.
+
+        Querying BlueZ's ObjectManager lets us find the device even when it is
+        already connected (and therefore not advertising). The adapter is
+        discovered dynamically (the device may live under hci0, hci1, ...), so
+        the path is never hardcoded. Returns None if the device cannot be found,
+        in which case the caller falls back to address-based resolution.
+        """
+        from dbus_next.aio.message_bus import MessageBus
+        from dbus_next.constants import BusType, MessageType
+        from dbus_next.message import Message
+
+        target = self.device_info.address.upper()
+        bus = None
+        try:
+            bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
+            reply = await bus.call(
+                Message(
+                    destination="org.bluez",
+                    path="/",
+                    interface="org.freedesktop.DBus.ObjectManager",
+                    member="GetManagedObjects",
+                )
+            )
+
+            if reply is None or reply.message_type != MessageType.METHOD_RETURN:
+                logger.debug("GetManagedObjects did not return successfully")
+                return None
+
+            objects = reply.body[0]
+            for path, interfaces in objects.items():
+                device = interfaces.get("org.bluez.Device1")
+                if not device:
+                    continue
+
+                address = device.get("Address")
+                if hasattr(address, "value"):
+                    address = address.value
+                if not address or address.upper() != target:
+                    continue
+
+                # Unwrap dbus_next Variants into plain Python values for bleak.
+                props = {
+                    key: (val.value if hasattr(val, "value") else val)
+                    for key, val in device.items()
+                }
+                name = props.get("Name") or props.get("Alias") or self.device_info.name
+                logger.info(f"Resolved {target} to BlueZ object path {path}")
+                return BLEDevice(self.device_info.address, name, {"path": path, "props": props})
+
+            logger.warning(
+                f"Could not resolve BlueZ object path for {target}; "
+                "falling back to address-based connection"
+            )
+            return None
+        except Exception as e:
+            logger.warning(f"Error resolving BlueZ device path for {target}: {e}")
+            return None
+        finally:
+            if bus:
+                try:
+                    bus.disconnect()
+                except Exception:
+                    pass
 
     async def _log_services(self):
         """Log available services and characteristics."""
@@ -295,6 +382,19 @@ class HuionKeydialMini:
                 # Send events to uinput
                 if self.uinput_handler and events:
                     for event in events:
+                        action_id = event.key_code
+                        if action_id and self.keybind_manager:
+                            action = self.keybind_manager.get_action(action_id)
+                            if action and action.keys and "LAYER_NEXT" in action.keys:
+                                if event.event_type == EventType.KEY_PRESS:
+                                    # Flush held modifiers before the layer map changes so no
+                                    # key gets stuck across the transition.
+                                    await self._release_held_modifiers()
+                                    self.keybind_manager.next_layer()
+                                    if self.debug_mode:
+                                        logger.debug(f"Layer switch triggered by: {action_id}")
+                                # Suppress both press and release — LAYER_NEXT is not a real key.
+                                continue
                         await self.uinput_handler.send_event(event)
                         if self.debug_mode:
                             logger.debug(f"Sent uinput event: {event.event_type} - {event.key_code}")

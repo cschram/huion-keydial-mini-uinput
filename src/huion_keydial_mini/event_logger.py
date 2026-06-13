@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """Simple event logger for Huion Keydial Mini HID events."""
 
+import argparse
+import asyncio
 import logging
 import sys
-import argparse
-from typing import List, Optional
 from datetime import datetime
-import asyncio
+from typing import Optional
 
 from .config import Config
-from .hid_parser import HIDParser, InputEvent, EventType
+from .hid_parser import EventType, HIDParser, InputEvent
 
 
 class EventLogger:
@@ -66,8 +66,10 @@ class EventLogger:
     def log_parser_events(self, data: bytearray, characteristic_uuid: Optional[str] = None):
         """Parse and log events from raw HID data."""
         # Debug: Print all incoming events to see what we're getting
-        if (self.debug_mode): print(f"DEBUG: Received event from characteristic: {characteristic_uuid}")
-        if (self.debug_mode): print(f"DEBUG: Raw data: {data.hex()}")
+        if self.debug_mode:
+            print(f"DEBUG: Received event from characteristic: {characteristic_uuid}")
+        if self.debug_mode:
+            print(f"DEBUG: Raw data: {data.hex()}")
 
         # Accept standard HID characteristics and let the parser handle the data
         if characteristic_uuid and self.debug_mode:

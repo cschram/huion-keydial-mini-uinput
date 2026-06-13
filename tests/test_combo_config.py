@@ -1,10 +1,11 @@
 """Tests for button combo support in configuration files."""
 
-import pytest
 import tempfile
-import yaml
 from pathlib import Path
-from unittest.mock import Mock, patch, call
+from unittest.mock import Mock, call, patch
+
+import pytest
+import yaml
 
 from huion_keydial_mini.config import Config
 from huion_keydial_mini.keybind_manager import KeybindManager

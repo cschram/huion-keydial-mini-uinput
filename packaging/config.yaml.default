@@ -19,6 +19,18 @@ device_address: null  # Will auto-discover if not set
 #   BUTTON_1+BUTTON_2+BUTTON_3: "KEY_LEFTCTRL+KEY_SHIFT+KEY_Z"  # Three-button combo
 #
 # Note: Button order in combos doesn't matter (BUTTON_1+BUTTON_2 = BUTTON_2+BUTTON_1)
+#
+# Held modifiers:
+#   A button bound to ONLY a modifier key is held down while you hold the button,
+#   so you can combine it with the mouse, the dial, a keyboard, or another button.
+#   Modifier keys: KEY_LEFTCTRL, KEY_RIGHTCTRL, KEY_LEFTSHIFT, KEY_RIGHTSHIFT,
+#                  KEY_LEFTALT, KEY_RIGHTALT, KEY_LEFTMETA, KEY_RIGHTMETA
+#   This is automatic (no --sticky needed) and modifiers stack (e.g. Ctrl + Shift).
+#   Example: hold a Ctrl button and tap an "X" button to send Ctrl+X:
+#     BUTTON_16: "KEY_LEFTCTRL"    # held while pressed
+#     BUTTON_11: "KEY_X"           # tap while holding BUTTON_16 -> Ctrl+X
+#   A binding with a non-modifier key (e.g. "KEY_LEFTCTRL+KEY_Z") is NOT held;
+#   it fires as a normal momentary combo.
 key_mappings:
   # Individual buttons
   # BUTTON_1: "KEY_F1"
@@ -40,11 +52,49 @@ sticky_key_mappings:
   # BUTTON_1: "KEY_LEFTCTRL"
 
 # Dial settings
+# Each action can be a key name (e.g. KEY_VOLUMEUP) or a scroll action:
+# SCROLL_UP, SCROLL_DOWN, SCROLL_LEFT, SCROLL_RIGHT turn the dial into a scroll wheel.
 dial_settings:
   DIAL_CW: "KEY_VOLUMEUP"      # Send volume up when dial is turned clockwise
   DIAL_CCW: "KEY_VOLUMEDOWN"   # Send volume down when dial is turned counterclockwise
   DIAL_CLICK: "KEY_MUTE"       # Send mute when dial is clicked
   sensitivity: 1.0             # Dial sensitivity (1.0 = normal, 2.0 = double, 0.5 = half)
+  # Example: scroll by turning the dial
+  # DIAL_CW: "SCROLL_UP"
+  # DIAL_CCW: "SCROLL_DOWN"
+
+# Layer system (optional)
+# If 'layers' is not defined, the driver uses key_mappings, sticky_key_mappings,
+# and dial_settings as a single-layer fallback.
+# LAYER_NEXT bound to a button/dial switches to the next layer (cycles 0->1->2->0).
+# The service always starts at layer 0 on startup.
+#
+# Inheritance: Each layer inherits bindings from the layer below it.
+# This means you only need to define the bindings that are different in each layer.
+# For example, if "Blender" (layer 0) has BUTTON_1=TAB and you want "Blender Extra" (layer 1)
+# to also have TAB on BUTTON_1, you don't need to repeat it — it inherits automatically.
+# Only define bindings that actually change in the upper layer.
+layers:
+  - name: "Default"
+    key_mappings:
+      # BUTTON_1: "KEY_F1"
+    sticky_key_mappings: {}
+    dial_settings:
+      DIAL_CLICK: "LAYER_NEXT"
+
+  - name: "Media"
+    key_mappings:
+      # BUTTON_1: "KEY_F2"
+    sticky_key_mappings: {}
+    dial_settings:
+      DIAL_CLICK: "LAYER_NEXT"
+
+  - name: "Browser"
+    key_mappings:
+      # BUTTON_1: "KEY_F3"
+    sticky_key_mappings: {}
+    dial_settings:
+      DIAL_CLICK: "LAYER_NEXT"
 
 # UInput device settings
 uinput_device_name: "huion-keydial-mini-uinput"

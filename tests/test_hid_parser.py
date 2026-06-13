@@ -1,10 +1,11 @@
 """Tests for the HID parser functionality."""
 
-import pytest
 from unittest.mock import Mock, patch
 
-from huion_keydial_mini.hid_parser import HIDParser, EventType, InputEvent
+import pytest
+
 from huion_keydial_mini.config import Config
+from huion_keydial_mini.hid_parser import EventType, HIDParser, InputEvent
 
 
 class TestHIDParser:
@@ -141,6 +142,61 @@ class TestHIDParser:
         event = events[0]
         assert event.event_type == EventType.KEY_RELEASE
         assert event.key_code == "DIAL_CLICK"
+
+    @pytest.mark.hid_parser
+    def test_parse_real_dial_clockwise(self, hid_parser, hid_test_data):
+        """Real 6-byte rotation report with positive delta -> DIAL_CW."""
+        events = hid_parser.parse(hid_test_data.REAL_DIAL_CW)
+
+        assert len(events) == 2  # Press and release
+        assert events[0].event_type == EventType.KEY_PRESS
+        assert events[0].key_code == "DIAL_CW"
+        assert events[0].direction == 1
+        assert events[1].event_type == EventType.KEY_RELEASE
+        assert events[1].key_code == "DIAL_CW"
+
+    @pytest.mark.hid_parser
+    def test_parse_real_dial_counterclockwise(self, hid_parser, hid_test_data):
+        """Real 6-byte rotation report with signed-negative delta -> DIAL_CCW."""
+        events = hid_parser.parse(hid_test_data.REAL_DIAL_CCW)
+
+        assert len(events) == 2
+        assert events[0].event_type == EventType.KEY_PRESS
+        assert events[0].key_code == "DIAL_CCW"
+        assert events[0].direction == -1
+        assert events[1].event_type == EventType.KEY_RELEASE
+        assert events[1].key_code == "DIAL_CCW"
+
+    @pytest.mark.hid_parser
+    def test_parse_real_dial_idle_emits_nothing(self, hid_parser, hid_test_data):
+        """Real rotation report with zero delta produces no events."""
+        assert hid_parser.parse(hid_test_data.REAL_DIAL_IDLE) == []
+
+    @pytest.mark.hid_parser
+    def test_parse_real_dial_fast_scales_steps(self, hid_parser, hid_test_data):
+        """Delta of 2 generates two press/release pairs at sensitivity 1.0."""
+        events = hid_parser.parse(hid_test_data.REAL_DIAL_CW_FAST)
+
+        assert len(events) == 4  # 2 press/release pairs
+        assert all(e.key_code == "DIAL_CW" for e in events)
+
+    @pytest.mark.hid_parser
+    def test_parse_real_dial_click(self, hid_parser, hid_test_data):
+        """Real 2-byte click report: nonzero data[0] -> press, then 00 -> release."""
+        press = hid_parser.parse(hid_test_data.REAL_DIAL_CLICK)
+        assert len(press) == 1
+        assert press[0].event_type == EventType.KEY_PRESS
+        assert press[0].key_code == "DIAL_CLICK"
+
+        release = hid_parser.parse(hid_test_data.REAL_DIAL_CLICK_RELEASE)
+        assert len(release) == 1
+        assert release[0].event_type == EventType.KEY_RELEASE
+        assert release[0].key_code == "DIAL_CLICK"
+
+    @pytest.mark.hid_parser
+    def test_vendor_report_ignored(self, hid_parser, hid_test_data):
+        """The 6-byte vendor report (data[0]=0x06) must not be read as rotation."""
+        assert hid_parser.parse(hid_test_data.VENDOR_REPORT) == []
 
     @pytest.mark.hid_parser
     def test_parse_type1_buttons(self, hid_parser, hid_test_data):

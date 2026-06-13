@@ -1,14 +1,15 @@
 """Tests for button combo handling in keydialctl CLI."""
 
-import pytest
 import asyncio
-import tempfile
 import os
-from unittest.mock import Mock, patch, AsyncMock
+import tempfile
 from pathlib import Path
+from unittest.mock import AsyncMock, Mock, patch
 
-from huion_keydial_mini.keybind_manager import send_command, KeybindManager
+import pytest
+
 from huion_keydial_mini.config import Config
+from huion_keydial_mini.keybind_manager import KeybindManager, send_command
 
 
 class TestKeydialctlComboHandling:
@@ -123,7 +124,9 @@ class TestKeydialctlComboHandling:
 
         for input_combo, expected_combo in test_cases:
             normalized = keybind_manager._validate_and_normalize_action_id(input_combo)
-            assert normalized == expected_combo, f"'{input_combo}' should normalize to '{expected_combo}', got '{normalized}'"
+            assert normalized == expected_combo, (
+                f"'{input_combo}' should normalize to '{expected_combo}', got '{normalized}'"
+            )
 
     @pytest.mark.combo
     def test_combo_action_creation(self, keybind_manager):

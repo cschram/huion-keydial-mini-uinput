@@ -64,13 +64,17 @@ systemctl --user enable --now huion-keydial-mini-user.service
    keydialctl list-keys
 
    # Bind button 1 to F1 key
-   keydialctl bind BUTTON_1 keyboard KEY_F1
+   keydialctl bind BUTTON_1 KEY_F1
 
    # Bind dial clockwise to volume up
-   keydialctl bind DIAL_CW keyboard KEY_VOLUMEUP
+   keydialctl bind DIAL_CW KEY_VOLUMEUP
+
+   # Bind the dial to the scroll wheel (turn to scroll up/down)
+   keydialctl bind DIAL_CW SCROLL_UP
+   keydialctl bind DIAL_CCW SCROLL_DOWN
 
    # Sticky bind button 1 to F1 key
-   keydialctl bind --sticky BUTTON_1 keyboard KEY_F1
+   keydialctl bind --sticky BUTTON_1 KEY_F1
 
    # Remove a binding
    keydialctl unbind BUTTON_1
@@ -91,7 +95,7 @@ systemctl --user enable --now huion-keydial-mini-user.service
 **Mouse Actions:**
 - **Mouse buttons**: `BTN_LEFT`, `BTN_RIGHT`, `BTN_MIDDLE`, `BTN_SIDE`, `BTN_EXTRA`, `BTN_FORWARD`, `BTN_BACK`
 - **Mouse movement**: X/Y relative movement support
-- **Mouse scroll**: Vertical and horizontal scroll wheel support
+- **Mouse scroll**: bind to `SCROLL_UP`, `SCROLL_DOWN`, `SCROLL_LEFT`, or `SCROLL_RIGHT`. This is especially useful on the dial — bind `DIAL_CW`/`DIAL_CCW` to `SCROLL_UP`/`SCROLL_DOWN` to scroll by turning it. Each dial step emits one scroll tick, scaled by `sensitivity`.
 
 **Combo Actions:**
 - Mixed keyboard/mouse actions (future enhancement)
@@ -99,6 +103,14 @@ systemctl --user enable --now huion-keydial-mini-user.service
 **Sticky Actions:**
 - Key bindings can be set as 'sticky', meaning they press and hold until released.
 - Sticky key bindings block other key bindings from being triggered until they are released.
+
+**Held Modifiers:**
+- A button bound to *only* a modifier key (`KEY_LEFTCTRL`, `KEY_RIGHTCTRL`, `KEY_LEFTSHIFT`, `KEY_RIGHTSHIFT`, `KEY_LEFTALT`, `KEY_RIGHTALT`, `KEY_LEFTMETA`, `KEY_RIGHTMETA`) is automatically treated as a *held modifier*: it is pressed when you physically press the button and released when you let go.
+- This lets you **hold a modifier and layer it** with the mouse, the dial, a real keyboard, or another Keydial button. For example, bind `BUTTON_16` to `KEY_LEFTCTRL` and `BUTTON_11` to `KEY_X`, then hold `BUTTON_16` and tap `BUTTON_11` to send `Ctrl+X`.
+- Multiple held modifiers **stack** — e.g. hold a `KEY_LEFTCTRL` button and a `KEY_LEFTSHIFT` button together for `Ctrl+Shift`.
+- This behavior is automatic and always on; no `--sticky` flag or extra configuration is required.
+- A binding that also contains a non-modifier key (e.g. `KEY_LEFTCTRL+KEY_Z`) is **not** a held modifier — it still fires as a normal momentary combo. Modifier-only bindings take precedence over `--sticky`.
+- Held modifiers are released automatically when the device disconnects or the service stops, to avoid stuck keys.
 
 ### Service Management
 
@@ -143,6 +155,8 @@ dial_settings:
   DIAL_CCW: "KEY_VOLUMEDOWN"   # Send volume down when dial is turned counterclockwise
   DIAL_CLICK: "KEY_MUTE"       # Send mute when dial is clicked
   sensitivity: 1.0             # Dial sensitivity (1.0 = normal, 2.0 = double, 0.5 = half)
+  # Tip: use a scroll action (SCROLL_UP / SCROLL_DOWN / SCROLL_LEFT / SCROLL_RIGHT)
+  # instead of a key name to turn the dial into a scroll wheel, e.g. DIAL_CW: "SCROLL_UP"
 
 # UInput device settings
 uinput_device_name: "Huion Keydial Mini"

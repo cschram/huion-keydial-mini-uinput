@@ -3,7 +3,7 @@ Description=Huion Keydial Mini User Service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/huion-keydial-mini
+ExecStart=%h/.local/bin/huion-keydial-mini
 
 # User service - no need for root
 # Security settings for user service

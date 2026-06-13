@@ -8,9 +8,8 @@ from typing import Optional
 
 import click
 
-from .device import HuionKeydialMini
 from .config import Config
-
+from .device import HuionKeydialMini
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +92,12 @@ def main(config: Optional[str], device_address: Optional[str], log_level: str, u
     try:
         # Load configuration
         app_config = Config.load(config, device_address)
+
+        # Honor debug_mode from the config file. Only override when the user
+        # left --log-level at its default (INFO) so an explicit flag still wins.
+        if getattr(app_config, 'debug_mode', False) and log_level == 'INFO':
+            logging.getLogger().setLevel(logging.DEBUG)
+            logger.debug("debug_mode enabled in config; raising log level to DEBUG")
 
         # Start the driver
         manager = DriverManager(app_config)

@@ -1,10 +1,11 @@
 """Tests for button combo detection in HID parser."""
 
-import pytest
 from unittest.mock import Mock, patch
 
-from huion_keydial_mini.hid_parser import HIDParser, EventType, InputEvent
+import pytest
+
 from huion_keydial_mini.config import Config
+from huion_keydial_mini.hid_parser import EventType, HIDParser, InputEvent
 
 
 class ComboHIDTestData:
